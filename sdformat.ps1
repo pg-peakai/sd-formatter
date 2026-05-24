@@ -39,11 +39,11 @@ function Format-Letter($id) {                    # $id like 'D:'
   $vol    = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
   $bytes  = if ($vol) { [int64]$vol.Size } else { 0 }
   $fs     = if ($bytes -le $Fat32MaxBytes) { 'FAT32' } else { 'exFAT' }
-  Log ("Full-formatting {0} ({1} GB) as {2} (writes every sector - can take a while) ..." `
+  Log ("Quick-formatting {0} ({1} GB) as {2} ..." `
        -f $id, [math]::Round($bytes/1GB,1), $fs)
   try {
     Format-Volume -DriveLetter $letter -FileSystem $fs -NewFileSystemLabel $VolName `
-                  -Full -Force -Confirm:$false -ErrorAction Stop | Out-Null
+                  -Force -Confirm:$false -ErrorAction Stop | Out-Null
     Log ("DONE {0} -> {1} ({2})" -f $id, $fs, $VolName)
     Shout 'rishav pull me out'
   } catch {
