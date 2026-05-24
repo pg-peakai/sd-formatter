@@ -1,64 +1,53 @@
 <#
-  sdformat.ps1 - watch for SD cards and format them the instant they're inserted,
-  announcing via Windows text-to-speech.
+  sdformat.ps1 - watch for SD cards / removable drives and format them the instant
+  they're inserted, announcing via Windows text-to-speech.
 
       on insert  -> shouts "rishav found you"
       on success -> shouts "rishav pull me out"
 
-  WARNING: erases inserted removable disks with NO confirmation.
-  Safety rails: skips boot/system disks; only USB/SD/MMC bus disks; and any disk
-  already connected when the script starts is ignored (only NEW inserts get wiped).
+  Detection is by DRIVE LETTER: when a new removable/fixed-removable volume appears
+  (DriveType 2 or 3) that wasn't present at startup, it's treated as a fresh insert.
+  This catches cards no matter how the reader enumerates them.
 
-  Run in an ELEVATED PowerShell (Administrator) or the format will fail.
+  WARNING: erases newly inserted drives with NO confirmation.
+  Safety rails: ignores everything present at startup (so your C: and existing
+  drives are safe), never touches the system drive, skips network/optical drives.
+
+  Run as Administrator or the format will fail.
 #>
 
 # ----- config -----
-$VolName       = 'SDCARD'              # FAT32 label: <=11 chars
-$PollInterval  = 2                     # seconds between scans
-$Fat32MaxBytes = 32GB                  # <=32GB -> FAT32, larger -> exFAT
-$StrictSD      = $false               # $true = only BusType 'SD' (built-in SD slots)
-$Buses         = @('USB','SD','MMC')   # buses treated as removable card media
+$VolName       = 'SDCARD'      # FAT32 label: <=11 chars
+$PollInterval  = 2            # seconds between scans
+$Fat32MaxBytes = 32GB         # <=32GB -> FAT32, larger -> exFAT
 
 # ----- tts -----
 Add-Type -AssemblyName System.Speech
 $script:synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-function Shout($text) { $script:synth.Speak($text) }   # synchronous: announces before acting
+function Shout($text) { try { $script:synth.Speak($text) } catch {} }
+function Log($msg)    { Write-Host ('{0}  {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg) }
 
-function Log($msg) { Write-Host ('{0}  {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg) }
-
-function Get-TargetDisks {
-  # Size -gt 0 means media is actually present: an EMPTY card reader enumerates as
-  # a disk with Size 0, so requiring media is what lets us notice a card insert.
-  Get-Disk |
-    Where-Object { $_.BusType -in $Buses -and -not $_.IsBoot -and -not $_.IsSystem -and $_.Size -gt 0 } |
-    Select-Object -ExpandProperty Number
+# Drive letters worth formatting: 2 = Removable (SD/USB), 3 = Local fixed
+# (some built-in readers report cards as "fixed"). Network/optical are excluded.
+function Get-CandidateLetters {
+  Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 2 OR DriveType = 3' |
+    Select-Object -ExpandProperty DeviceID      # e.g. 'D:'
 }
 
-# Re-check the disk right before wiping; refuse boot/system, honor strict mode.
-function Test-SafeTarget($num) {
-  $d = Get-Disk -Number $num -ErrorAction SilentlyContinue
-  if (-not $d)                              { Log "SKIP disk ${num}: gone";              return $false }
-  if ($d.IsBoot -or $d.IsSystem)           { Log "SKIP disk ${num}: boot/system disk";  return $false }
-  if ($StrictSD -and $d.BusType -ne 'SD')  { Log "SKIP disk ${num}: not SD bus (strict)"; return $false }
-  if ($d.BusType -notin $Buses)            { Log "SKIP disk ${num}: bus $($d.BusType)";  return $false }
-  return $true
-}
-
-function Format-Card($num) {
-  $d     = Get-Disk -Number $num
-  $bytes = $d.Size
-  $fs    = if ($bytes -le $Fat32MaxBytes) { 'FAT32' } else { 'exFAT' }
-  Log ("Full-formatting disk {0} ({1} GB) as {2} (writes every sector - this can take a while) ..." -f $num, [math]::Round($bytes/1GB,1), $fs)
+function Format-Letter($id) {                    # $id like 'D:'
+  $letter = $id.TrimEnd(':')
+  $vol    = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+  $bytes  = if ($vol) { [int64]$vol.Size } else { 0 }
+  $fs     = if ($bytes -le $Fat32MaxBytes) { 'FAT32' } else { 'exFAT' }
+  Log ("Full-formatting {0} ({1} GB) as {2} (writes every sector - can take a while) ..." `
+       -f $id, [math]::Round($bytes/1GB,1), $fs)
   try {
-    Clear-Disk    -Number $num -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
-    Initialize-Disk -Number $num -PartitionStyle MBR -ErrorAction SilentlyContinue
-    $part = New-Partition -DiskNumber $num -UseMaximumSize -AssignDriveLetter -ErrorAction Stop
-    Format-Volume -Partition $part -FileSystem $fs -NewFileSystemLabel $VolName `
+    Format-Volume -DriveLetter $letter -FileSystem $fs -NewFileSystemLabel $VolName `
                   -Full -Force -Confirm:$false -ErrorAction Stop | Out-Null
-    Log ("DONE disk {0} -> {1} ({2}) at {3}:" -f $num, $fs, $VolName, $part.DriveLetter)
+    Log ("DONE {0} -> {1} ({2})" -f $id, $fs, $VolName)
     Shout 'rishav pull me out'
   } catch {
-    Log "FAIL disk ${num}: $($_.Exception.Message)"
+    Log ("FAIL {0}: {1}" -f $id, $_.Exception.Message)
   }
 }
 
@@ -67,25 +56,24 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
          ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { Write-Warning 'Not elevated - formatting will fail. Re-launch PowerShell as Administrator.' }
 
-Log 'Watching for SD cards. NEW removable disks will be ERASED on insert. Ctrl+C to stop.'
-$seen = [System.Collections.Generic.HashSet[int]]::new()
-foreach ($n in Get-TargetDisks) { [void]$seen.Add($n) }   # ignore pre-connected drives
-$seenList = if ($seen.Count) { ($seen) -join ', ' } else { 'none' }
-Log "Ignoring already-connected disks with media: $seenList"
-Log 'Disks visible right now (boot/system excluded):'
-Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem } |
-  Format-Table Number, BusType, OperationalStatus,
-    @{n='SizeGB';e={[math]::Round($_.Size/1GB,1)}} -AutoSize | Out-Host
+$sysDrive = $env:SystemDrive   # e.g. 'C:' - never format this
+
+Log 'Watching for SD cards by drive letter. NEW inserts will be ERASED. Ctrl+C to stop.'
+$seen = [System.Collections.Generic.HashSet[string]]::new()
+foreach ($d in Get-CandidateLetters) { [void]$seen.Add($d) }
+$list = if ($seen.Count) { ($seen) -join ', ' } else { 'none' }
+Log "Ignoring drives present at startup: $list"
 
 while ($true) {
-  $current = @(Get-TargetDisks)
-  foreach ($n in @($seen)) { if ($current -notcontains $n) { [void]$seen.Remove($n) } }  # re-insert re-triggers
-  foreach ($n in $current) {
-    if ($seen.Contains($n)) { continue }
-    [void]$seen.Add($n)
-    Log "Detected disk $n"
+  $current = @(Get-CandidateLetters)
+  foreach ($d in @($seen)) { if ($current -notcontains $d) { [void]$seen.Remove($d) } }  # removal re-arms
+  foreach ($d in $current) {
+    if ($seen.Contains($d)) { continue }
+    [void]$seen.Add($d)
+    if ($d -eq $sysDrive) { Log "SKIP $d: system drive"; continue }
+    Log "Detected $d"
     Shout 'rishav found you'
-    if (Test-SafeTarget $n) { Format-Card $n }
+    Format-Letter $d
   }
   Start-Sleep -Seconds $PollInterval
 }
