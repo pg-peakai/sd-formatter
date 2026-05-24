@@ -35,10 +35,10 @@ function Get-TargetDisks {
 # Re-check the disk right before wiping; refuse boot/system, honor strict mode.
 function Test-SafeTarget($num) {
   $d = Get-Disk -Number $num -ErrorAction SilentlyContinue
-  if (-not $d)                              { Log "SKIP disk $num: gone";              return $false }
-  if ($d.IsBoot -or $d.IsSystem)           { Log "SKIP disk $num: boot/system disk";  return $false }
-  if ($StrictSD -and $d.BusType -ne 'SD')  { Log "SKIP disk $num: not SD bus (strict)"; return $false }
-  if ($d.BusType -notin $Buses)            { Log "SKIP disk $num: bus $($d.BusType)";  return $false }
+  if (-not $d)                              { Log "SKIP disk ${num}: gone";              return $false }
+  if ($d.IsBoot -or $d.IsSystem)           { Log "SKIP disk ${num}: boot/system disk";  return $false }
+  if ($StrictSD -and $d.BusType -ne 'SD')  { Log "SKIP disk ${num}: not SD bus (strict)"; return $false }
+  if ($d.BusType -notin $Buses)            { Log "SKIP disk ${num}: bus $($d.BusType)";  return $false }
   return $true
 }
 
@@ -56,7 +56,7 @@ function Format-Card($num) {
     Log ("DONE disk {0} -> {1} ({2}) at {3}:" -f $num, $fs, $VolName, $part.DriveLetter)
     Shout 'rishav pull me out'
   } catch {
-    Log "FAIL disk $num: $($_.Exception.Message)"
+    Log "FAIL disk ${num}: $($_.Exception.Message)"
   }
 }
 
