@@ -46,13 +46,13 @@ function Format-Card($num) {
   $d     = Get-Disk -Number $num
   $bytes = $d.Size
   $fs    = if ($bytes -le $Fat32MaxBytes) { 'FAT32' } else { 'exFAT' }
-  Log ("Formatting disk {0} ({1} GB) as {2} ..." -f $num, [math]::Round($bytes/1GB,1), $fs)
+  Log ("Full-formatting disk {0} ({1} GB) as {2} (writes every sector - this can take a while) ..." -f $num, [math]::Round($bytes/1GB,1), $fs)
   try {
     Clear-Disk    -Number $num -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
     Initialize-Disk -Number $num -PartitionStyle MBR -ErrorAction SilentlyContinue
     $part = New-Partition -DiskNumber $num -UseMaximumSize -AssignDriveLetter -ErrorAction Stop
     Format-Volume -Partition $part -FileSystem $fs -NewFileSystemLabel $VolName `
-                  -Force -Confirm:$false -ErrorAction Stop | Out-Null
+                  -Full -Force -Confirm:$false -ErrorAction Stop | Out-Null
     Log ("DONE disk {0} -> {1} ({2}) at {3}:" -f $num, $fs, $VolName, $part.DriveLetter)
     Shout 'rishav pull me out'
   } catch {
