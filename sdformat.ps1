@@ -27,8 +27,10 @@ function Shout($text) { $script:synth.Speak($text) }   # synchronous: announces 
 function Log($msg) { Write-Host ('{0}  {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg) }
 
 function Get-TargetDisks {
+  # Size -gt 0 means media is actually present: an EMPTY card reader enumerates as
+  # a disk with Size 0, so requiring media is what lets us notice a card insert.
   Get-Disk |
-    Where-Object { $_.BusType -in $Buses -and -not $_.IsBoot -and -not $_.IsSystem } |
+    Where-Object { $_.BusType -in $Buses -and -not $_.IsBoot -and -not $_.IsSystem -and $_.Size -gt 0 } |
     Select-Object -ExpandProperty Number
 }
 
@@ -68,7 +70,12 @@ if (-not $admin) { Write-Warning 'Not elevated - formatting will fail. Re-launch
 Log 'Watching for SD cards. NEW removable disks will be ERASED on insert. Ctrl+C to stop.'
 $seen = [System.Collections.Generic.HashSet[int]]::new()
 foreach ($n in Get-TargetDisks) { [void]$seen.Add($n) }   # ignore pre-connected drives
-Log ("Ignoring already-connected disks: {0}" -f (($seen) -join ', '))
+$seenList = if ($seen.Count) { ($seen) -join ', ' } else { 'none' }
+Log "Ignoring already-connected disks with media: $seenList"
+Log 'Disks visible right now (boot/system excluded):'
+Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem } |
+  Format-Table Number, BusType, OperationalStatus,
+    @{n='SizeGB';e={[math]::Round($_.Size/1GB,1)}} -AutoSize | Out-Host
 
 while ($true) {
   $current = @(Get-TargetDisks)
